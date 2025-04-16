@@ -1,0 +1,173 @@
+# This is a basic workflow to help you get started with Actions
+
+name: Build and Release Hadoop Winutils
+
+# Controls when the workflow will run
+on:
+  workflow_dispatch:
+    inputs:
+      hadoop_version:
+        description: 'Hadoop version to build (e.g., 3.3.4)'
+        required: true
+        default: '3.3.4'
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+env:
+  # Define versions needed for the build - Adjust these based on Hadoop's BUILDING.txt for the target version
+  # For Hadoop 3.3.4:
+  JAVA_VERSION: '11'          # Hadoop 3.3+ supports Java 8 and 11
+  MAVEN_VERSION: '3.8.8'      # Use a recent Maven 3.x version
+  PROTOBUF_VERSION: '3.7.1'   # Critical for Hadoop 3.3.x builds (upgraded from 2.5.0)
+  TARGET_ARCH: 'x64'          # Build 64-bit binaries
+
+jobs:
+  build-winutils:
+    runs-on: windows-latest # Essential: Needs a Windows runner with Visual Studio
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142 # v2.7.0
+        with:
+          egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
+
+      # 1. Set up Build Environment
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@99b8673ff632679a6d79e5eba52ae98de13f81cc # v4.2.1
+        with:
+          distribution: 'temurin' # Or another distribution like 'microsoft'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Maven ${{ env.MAVEN_VERSION }}
+        uses: actions/setup-maven@9706ba6a3a2b59989838640482a96762f99771bd # v4.2.1
+        with:
+          maven-version: ${{ env.MAVEN_VERSION }}
+
+      # CMake is usually pre-installed on windows-latest runners, verify if needed
+      - name: Check CMake Installation
+        run: cmake --version
+
+      # zlib development files are needed. Using Chocolatey is one option, but can be fragile.
+      # Ensure the package provides headers and link libraries compatible with MSVC.
+      # Alternative: Download pre-compiled dev package or build zlib from source in a prior step.
+      - name: Install zlib development package (via Chocolatey - may need adjustment)
+        run: choco install zlib-msvc-${{ env.TARGET_ARCH }} -y --no-progress
+        # If the above fails, you might need to find a different package or download/install manually
+        # e.g., Download from https://zlib.net/ and set INCLUDE/LIB env vars
+
+      - name: Download and Setup Protocol Buffers (${{ env.PROTOBUF_VERSION }})
+        shell: pwsh
+        run: |
+          $ProtobufUrl = "https://github.com/protocolbuffers/protobuf/releases/download/v${{ env.PROTOBUF_VERSION }}/protoc-${{ env.PROTOBUF_VERSION }}-win64.zip" # Assuming 64-bit
+          $ProtobufZip = "protoc.zip"
+          $ProtobufDir = "C:\protobuf-${{ env.PROTOBUF_VERSION }}"
+          Invoke-WebRequest -Uri $ProtobufUrl -OutFile $ProtobufZip
+          Expand-Archive -Path $ProtobufZip -DestinationPath $ProtobufDir -Force
+          # Add protoc to the PATH for this job
+          echo "$($ProtobufDir)\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Remove-Item $ProtobufZip
+          protoc --version # Verify
+
+      # 2. Download and Extract Hadoop Source
+      - name: Download Hadoop Source (${{ github.event.inputs.hadoop_version }})
+        shell: pwsh
+        run: |
+          $HadoopVersion = "${{ github.event.inputs.hadoop_version }}"
+          # Use the main archive first, fallback to archive mirror if needed
+          $HadoopUrl = "https://dlcdn.apache.org/hadoop/common/hadoop-$HadoopVersion/hadoop-$HadoopVersion-src.tar.gz"
+          $HadoopMirrorUrl = "https://archive.apache.org/dist/hadoop/common/hadoop-$HadoopVersion/hadoop-$HadoopVersion-src.tar.gz"
+          $HadoopTgz = "hadoop-$HadoopVersion-src.tar.gz"
+          $HadoopSrcDir = "C:\hadoop-src" # Use a short path
+
+          try {
+            Invoke-WebRequest -Uri $HadoopUrl -OutFile $HadoopTgz -UseBasicParsing
+          } catch {
+            Write-Host "Primary URL failed, trying archive mirror..."
+            Invoke-WebRequest -Uri $HadoopMirrorUrl -OutFile $HadoopTgz -UseBasicParsing
+          }
+
+          New-Item -ItemType Directory -Force -Path $HadoopSrcDir
+          # Use tar (available on GH runners) to extract .tar.gz
+          tar -xzf $HadoopTgz -C $HadoopSrcDir --strip-components=1
+          Remove-Item $HadoopTgz
+          # Set HADOOP_SRC environment variable for later steps
+          echo "HADOOP_SRC=${HadoopSrcDir}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "HADOOP_VERSION=${HadoopVersion}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+
+      # 3. Build Hadoop Native Binaries
+      # This step requires running Maven within the Visual Studio Developer Command Prompt environment
+      - name: Find VS Developer Command Prompt
+        id: vsdevcmd
+        shell: pwsh
+        run: |
+          # Use vswhere to find the location of VsDevCmd.bat reliably
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = (& $vswhere -latest -property installationPath)
+          $vsDevCmd = Join-Path $vsPath "Common7\Tools\VsDevCmd.bat"
+          if (-not (Test-Path $vsDevCmd)) {
+            Write-Error "Could not find VsDevCmd.bat at $vsDevCmd"
+            exit 1
+          }
+          echo "vs_dev_cmd_path=$vsDevCmd" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Build Hadoop with Maven (using VsDevCmd)
+        shell: cmd # VsDevCmd.bat works best with cmd
+        run: |
+          set MAVEN_OPTS=-Xmx2g -Dmaven.artifact.threads=1
+          set JAVA_HOME=${{ env.JAVA_HOME }}
+          echo "Using JAVA_HOME: %JAVA_HOME%"
+          echo "Using HADOOP_SRC: %HADOOP_SRC%"
+          REM Initialize the Visual Studio environment
+          call "${{ steps.vsdevcmd.outputs.vs_dev_cmd_path }}" -arch=${{ env.TARGET_ARCH }} -host_arch=${{ env.TARGET_ARCH }}
+
+          REM Navigate to source directory and run Maven build
+          cd %HADOOP_SRC%
+          mvn package -Pdist,native-win -DskipTests -Dtar -Dmaven.javadoc.skip=true -Dmaven.source.skip=true -Dcheckstyle.skip=true --batch-mode --no-transfer-progress
+
+      # 4. Package the Binaries
+      - name: Prepare Release Artifact
+        shell: pwsh
+        run: |
+          $PackageDir = "C:\release-package"
+          $BinDir = "${{ env.HADOOP_SRC }}\hadoop-dist\target\hadoop-${{ env.HADOOP_VERSION }}\bin"
+          $ArtifactName = "hadoop-winutils-${{ env.HADOOP_VERSION }}-${{ env.TARGET_ARCH }}.zip"
+
+          New-Item -Path $PackageDir -ItemType Directory -Force
+          Copy-Item -Path (Join-Path $BinDir "winutils.exe") -Destination $PackageDir
+          Copy-Item -Path (Join-Path $BinDir "hadoop.dll") -Destination $PackageDir
+          # Optionally copy license/notice files
+          Copy-Item -Path "${{ env.HADOOP_SRC }}\LICENSE.txt" -Destination $PackageDir -ErrorAction SilentlyContinue
+          Copy-Item -Path "${{ env.HADOOP_SRC }}\NOTICE.txt" -Destination $PackageDir -ErrorAction SilentlyContinue
+
+          Compress-Archive -Path "$PackageDir\*" -DestinationPath $ArtifactName -Force
+          echo "artifact_path=${ArtifactName}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "release_tag=v${{ env.HADOOP_VERSION }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append # Create a tag like v3.3.4
+
+      # 5. Create GitHub Release and Upload Artifact
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@e675d3c76fe66409908b767d4a9797064740f6a1 # v1.1.4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This token is automatically provided
+        with:
+          tag_name: ${{ env.release_tag }}
+          release_name: Hadoop Winutils ${{ env.HADOOP_VERSION }} (${{ env.TARGET_ARCH }})
+          body: |
+            Compiled `winutils.exe` and `hadoop.dll` for Hadoop ${{ env.HADOOP_VERSION }} on Windows (${{ env.TARGET_ARCH }}).
+            Built via GitHub Actions from official Apache Hadoop source.
+            **Source:** `hadoop-${{ env.HADOOP_VERSION }}-src.tar.gz`
+            **Protobuf:** `${{ env.PROTOBUF_VERSION }}`
+            **JDK:** `${{ env.JAVA_VERSION }}`
+            **Built on:** `${{ runner.os }}`
+          draft: false
+          prerelease: false # Set to true if you consider these pre-releases
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@4c89b6a3516c901937533f54b91b955d7c2697a1 # v1.0.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ env.artifact_path }}
+          asset_name: ${{ env.artifact_path }}
+          asset_content_type: application/zip
