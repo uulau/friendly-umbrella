@@ -84,9 +84,24 @@ jobs:
           set JAVA_HOME=${{ env.JAVA_HOME }}
           echo "Using JAVA_HOME: %JAVA_HOME%"
           echo "Using HADOOP_SRC: %HADOOP_SRC%"
+          echo "VS Dev Cmd Path: ${{ steps.vsdevcmd.outputs.vs_dev_cmd_path }}"
+          echo "Target Arch: ${{ env.TARGET_ARCH }}"
+  
           REM Initialize the Visual Studio environment
           call "${{ steps.vsdevcmd.outputs.vs_dev_cmd_path }}" -arch=${{ env.TARGET_ARCH }} -host_arch=${{ env.TARGET_ARCH }}
-
-          REM Navigate to source directory and run Maven build
+  
+          REM Navigate to source directory
           cd %HADOOP_SRC%
-          mvn package -Pdist,native-win -DskipTests -Dtar -Dmaven.javadoc.skip=true -Dmaven.source.skip=true -Dcheckstyle.skip=true --batch-mode --no-transfer-progress
+  
+          REM Verify the current directory and pom.xml existence
+          echo "Current Directory after cd: %CD%"
+          echo "Checking for pom.xml..."
+          dir /b pom.xml
+          IF %ERRORLEVEL% NEQ 0 (
+            echo "ERROR: pom.xml not found in %CD%"
+            exit /B 1
+          )
+  
+          echo "Running Maven build..."
+          REM Explicitly point to the pom.xml in the current directory
+          mvn -f pom.xml package -Pdist,native-win -DskipTests -Dtar -Dmaven.javadoc.skip=true -Dmaven.source.skip=true -Dcheckstyle.skip=true --batch-mode --no-transfer-progress
