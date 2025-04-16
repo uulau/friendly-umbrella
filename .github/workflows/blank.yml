@@ -41,8 +41,8 @@ jobs:
       # zlib development files are needed. Using Chocolatey is one option, but can be fragile.
       # Ensure the package provides headers and link libraries compatible with MSVC.
       # Alternative: Download pre-compiled dev package or build zlib from source in a prior step.
-      - name: Install zlib development package (via Chocolatey - may need adjustment)
-        run: choco install zlib-msvc-${{ env.TARGET_ARCH }} -y --no-progress
+      - name: Install zlib development package
+        run: vcpkg install zlib
         # If the above fails, you might need to find a different package or download/install manually
         # e.g., Download from https://zlib.net/ and set INCLUDE/LIB env vars
 
