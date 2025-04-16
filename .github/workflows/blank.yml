@@ -30,21 +30,12 @@ jobs:
         with:
           egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
 
-      # 1. Set up Build Environment
-      - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@99b8673ff632679a6d79e5eba52ae98de13f81cc # v4.2.1
+      - name: Setup Java JDK
+        uses: actions/setup-java@v3.14.0
         with:
-          distribution: 'temurin' # Or another distribution like 'microsoft'
-          java-version: ${{ env.JAVA_VERSION }}
-
-      - name: Set up Maven ${{ env.MAVEN_VERSION }}
-        uses: actions/setup-maven@9706ba6a3a2b59989838640482a96762f99771bd # v4.2.1
-        with:
-          maven-version: ${{ env.MAVEN_VERSION }}
-
-      # CMake is usually pre-installed on windows-latest runners, verify if needed
-      - name: Check CMake Installation
-        run: cmake --version
+          java-version: 11
+          distribution: corretto
+          check-latest: true
 
       # zlib development files are needed. Using Chocolatey is one option, but can be fragile.
       # Ensure the package provides headers and link libraries compatible with MSVC.
