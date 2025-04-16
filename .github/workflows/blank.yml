@@ -11,13 +11,8 @@ on:
         required: true
         default: '3.3.4'
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 env:
-  # Define versions needed for the build - Adjust these based on Hadoop's BUILDING.txt for the target version
-  # For Hadoop 3.3.4:
   JAVA_VERSION: '11'          # Hadoop 3.3+ supports Java 8 and 11
-  MAVEN_VERSION: '3.8.8'      # Use a recent Maven 3.x version
-  PROTOBUF_VERSION: '3.7.1'   # Critical for Hadoop 3.3.x builds (upgraded from 2.5.0)
   TARGET_ARCH: 'x64'          # Build 64-bit binaries
 
 jobs:
@@ -37,12 +32,6 @@ jobs:
         with:
           java-version: 11
           distribution: corretto
-
-      - name: Install zlib development package
-        run: vcpkg install zlib
-
-      - name: Download and Setup Protocol Buffers
-        run: vcpkg install protobuf
         
       - name: Checkout Hadoop Source via Git (${{ github.event.inputs.hadoop_version }})
         shell: pwsh
@@ -93,17 +82,11 @@ jobs:
           call "${{ steps.vsdevcmd.outputs.vs_dev_cmd_path }}" -arch=${{ env.TARGET_ARCH }} -host_arch=${{ env.TARGET_ARCH }}
   
           REM Navigate to source directory
-          cd /d %HADOOP_SRC%
+          cd /d %HADOOP_SRC%\hadoop-common-project\hadoop-common
   
           REM Verify the current directory and pom.xml existence
           echo "Current Directory after cd: %CD%"
-          echo "Checking for pom.xml..."
-          dir /b pom.xml
-          IF %ERRORLEVEL% NEQ 0 (
-            echo "ERROR: pom.xml not found in %CD%"
-            exit /B 1
-          )
   
           echo "Running Maven build..."
-          REM Explicitly point to the pom.xml in the current directory
-          mvn -f pom.xml package -Pdist,native-win -DskipTests -Dtar -Dmaven.javadoc.skip=true -Dmaven.source.skip=true -Dcheckstyle.skip=true --batch-mode --no-transfer-progress
+
+          mvn -T 1C clean install -DskipTests
