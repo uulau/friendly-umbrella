@@ -91,7 +91,7 @@ jobs:
           call "${{ steps.vsdevcmd.outputs.vs_dev_cmd_path }}" -arch=${{ env.TARGET_ARCH }} -host_arch=${{ env.TARGET_ARCH }}
   
           REM Navigate to source directory
-          cd %HADOOP_SRC%
+          cd /d %HADOOP_SRC%
   
           REM Verify the current directory and pom.xml existence
           echo "Current Directory after cd: %CD%"
