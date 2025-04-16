@@ -26,11 +26,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-    
-      - name: Harden Runner
-        uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142 # v2.7.0
-        with:
-          egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
 
       - name: Setup Java JDK
         uses: actions/setup-java@v4
@@ -38,49 +33,26 @@ jobs:
           java-version: 11
           distribution: corretto
 
-      # zlib development files are needed. Using Chocolatey is one option, but can be fragile.
-      # Ensure the package provides headers and link libraries compatible with MSVC.
-      # Alternative: Download pre-compiled dev package or build zlib from source in a prior step.
       - name: Install zlib development package
         run: vcpkg install zlib
-        # If the above fails, you might need to find a different package or download/install manually
-        # e.g., Download from https://zlib.net/ and set INCLUDE/LIB env vars
 
-      - name: Download and Setup Protocol Buffers (${{ env.PROTOBUF_VERSION }})
-        shell: pwsh
-        run: |
-          $ProtobufUrl = "https://github.com/protocolbuffers/protobuf/releases/download/v${{ env.PROTOBUF_VERSION }}/protoc-${{ env.PROTOBUF_VERSION }}-win64.zip" # Assuming 64-bit
-          $ProtobufZip = "protoc.zip"
-          $ProtobufDir = "C:\protobuf-${{ env.PROTOBUF_VERSION }}"
-          Invoke-WebRequest -Uri $ProtobufUrl -OutFile $ProtobufZip
-          Expand-Archive -Path $ProtobufZip -DestinationPath $ProtobufDir -Force
-          # Add protoc to the PATH for this job
-          echo "$($ProtobufDir)\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          Remove-Item $ProtobufZip
-          protoc --version # Verify
-
-      # 2. Download and Extract Hadoop Source
-      - name: Download Hadoop Source (${{ github.event.inputs.hadoop_version }})
+      - name: Download and Setup Protocol Buffers
+        run: vcpkg install protobuf
+        
+      - name: Checkout Hadoop Source via Git (${{ github.event.inputs.hadoop_version }})
         shell: pwsh
         run: |
           $HadoopVersion = "${{ github.event.inputs.hadoop_version }}"
-          # Use the main archive first, fallback to archive mirror if needed
-          $HadoopUrl = "https://dlcdn.apache.org/hadoop/common/hadoop-$HadoopVersion/hadoop-$HadoopVersion-src.tar.gz"
-          $HadoopMirrorUrl = "https://archive.apache.org/dist/hadoop/common/hadoop-$HadoopVersion/hadoop-$HadoopVersion-src.tar.gz"
-          $HadoopTgz = "hadoop-$HadoopVersion-src.tar.gz"
           $HadoopSrcDir = "C:\hadoop-src" # Use a short path
+          # Hadoop release tags are typically prefixed with 'rel/release-'
+          $TagName = "rel/release-$HadoopVersion"
+          $RepoUrl = "https://github.com/apache/hadoop.git" # Official read-only mirror
 
-          try {
-            Invoke-WebRequest -Uri $HadoopUrl -OutFile $HadoopTgz -UseBasicParsing
-          } catch {
-            Write-Host "Primary URL failed, trying archive mirror..."
-            Invoke-WebRequest -Uri $HadoopMirrorUrl -OutFile $HadoopTgz -UseBasicParsing
-          }
+          Write-Host "Cloning Hadoop version $HadoopVersion (tag $TagName) from $RepoUrl"
+          # Clone only the specific tag with minimal history (--depth 1)
+          git clone --depth 1 --branch $TagName $RepoUrl $HadoopSrcDir
+          Write-Host "Successfully cloned to $HadoopSrcDir"
 
-          New-Item -ItemType Directory -Force -Path $HadoopSrcDir
-          # Use tar (available on GH runners) to extract .tar.gz
-          tar -xzf $HadoopTgz -C $HadoopSrcDir --strip-components=1
-          Remove-Item $HadoopTgz
           # Set HADOOP_SRC environment variable for later steps
           echo "HADOOP_SRC=${HadoopSrcDir}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           echo "HADOOP_VERSION=${HadoopVersion}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
