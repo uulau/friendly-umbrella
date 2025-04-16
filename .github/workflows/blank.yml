@@ -25,6 +25,8 @@ jobs:
     runs-on: windows-latest # Essential: Needs a Windows runner with Visual Studio
 
     steps:
+      - uses: actions/checkout@v4
+    
       - name: Harden Runner
         uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142 # v2.7.0
         with:
@@ -35,7 +37,6 @@ jobs:
         with:
           java-version: 11
           distribution: corretto
-          check-latest: true
 
       # zlib development files are needed. Using Chocolatey is one option, but can be fragile.
       # Ensure the package provides headers and link libraries compatible with MSVC.
